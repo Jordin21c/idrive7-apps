@@ -333,6 +333,27 @@ mgu.run({
             return light ? pictureOf(carNow, l)(light) : null;
         };
 
+        // the Colour tab's own buttons: flat, squared, the one that is on outlined in the theme's light accent (the
+        // other tabs keep the kit's pills). Drawn only where the app has the screen, as the kit's are
+        const FLAT = { r: 5, fill: '#161c26', fillOn: '#1d2531', edge: '#2c3644' };
+        const mark = (t) => t.accent2 || t.accent;
+        function flat(cv, t, x, y, w, h, on) {
+            cv.roundRect(x, y, w, h, FLAT.r, on ? FLAT.fillOn : FLAT.fill);
+            cv.strokeRoundRect(x, y, w, h, FLAT.r, on ? 2 : 1.2, on ? mark(t) : FLAT.edge);
+        }
+        function btn(cv, t, x, y, w, h, label, run, opts) {
+            const o = opts || {};
+            if (!cv.own) return 0;
+            flat(cv, t, x, y, w, h, o.on);
+            const cx = x + w / 2, cy = y + h / 2, c = o.busy ? t.dim : t.text;
+            if (label === '-' || label === '+') {           // drawn, not typed: the same weight at any size
+                cv.line(cx - 8, cy, cx + 8, cy, 2.5, c);
+                if (label === '+') cv.line(cx, cy - 8, cx, cy + 8, 2.5, c);
+            } else cv.text(label, cx, cy + 7, 19, c, { align: 'center' });
+            if (!o.busy && run) cv.target(x, y, w, h, run, o.key || label);
+            return w;
+        }
+
         function drawColour(cv, t) {
             const l = look(), c = partColour(l);
             const q = hsOf(c), full = S.hex(Wh.colour(q.h, 1)), now = S.hex(Wh.colour(q.h, q.s));
@@ -344,15 +365,14 @@ mgu.run({
             if (lights.state === 'none' && !editing) drawBmwColours(cv, t, 40);
             else drawInterior(cv, PICTURE, partShows(l, 'upper'), partShows(l, 'lower'), { dim: part === 'upper' ? 'lower' : part === 'lower' ? 'upper' : null });
             PARTS.forEach(([key, name, what], i) => {
-                const b = partBox(i), on = part === key, S0 = t.sel || t.accent;
-                cv.roundRect(b.x, b.y, b.w, b.h, 16, on ? withAlpha(S0, 0.85) : withAlpha('#ffffff', 0.07));
-                if (!on) cv.strokeRoundRect(b.x, b.y, b.w, b.h, 16, 1.5, withAlpha('#ffffff', 0.3));
+                const b = partBox(i), on = part === key;
+                flat(cv, t, b.x, b.y, b.w, b.h, on);
                 const cx = b.x + 36, cy = b.y + b.h / 2;
-                cv.arc(cx, cy, 0, 19, 0, 360, '#ffffff');
-                if (key === 'all') { cv.arc(cx, cy, 0, 16, 180, 360, shade(l.upper)); cv.arc(cx, cy, 0, 16, 0, 180, shade(l.lower)); }
-                else cv.arc(cx, cy, 0, 16, 0, 360, shade(l[key]));
-                cv.text(name, b.x + 66, cy - 2, 21, '#ffffff', { font: 'bold' });
-                cv.text(what, b.x + 66, cy + 21, 15, on ? withAlpha('#ffffff', 0.85) : t.dim);
+                cv.arc(cx, cy, 0, 18, 0, 360, withAlpha('#ffffff', 0.3));
+                if (key === 'all') { cv.arc(cx, cy, 0, 16.5, 180, 360, shade(l.upper)); cv.arc(cx, cy, 0, 16.5, 0, 180, shade(l.lower)); }
+                else cv.arc(cx, cy, 0, 16.5, 0, 360, shade(l[key]));
+                cv.text(name, b.x + 66, cy - 2, 21, t.text, { font: 'bold' });
+                cv.text(what, b.x + 66, cy + 21, 15, t.dim);
                 if (cv.own) cv.target(b.x, b.y, b.w, b.h, () => { part = key; return redraw(); }, 'part-' + key);
             });
 
@@ -368,10 +388,10 @@ mgu.run({
             cv.arc(k.x, k.y, 0, 19, 0, 360, withAlpha('#000000', 0.55)); cv.arc(k.x, k.y, 0, 16, 0, 360, '#ffffff'); cv.arc(k.x, k.y, 0, 12, 0, 360, now);
 
             const shownRgb = shade(c);
-            cv.roundRect(1012, 108, 212, 64, 14, shownRgb);
+            cv.roundRect(1012, 108, 212, 64, FLAT.r, shownRgb);
             cv.text(nearest(c.rgb), 1118, 149, 26, textOn(shownRgb), { align: 'center', font: 'bold' });
             [['Upper', l.upper], ['Lower', l.lower]].forEach(([n, v], i) => {
-                cv.roundRect(1012, 196 + i * 38, 24, 24, 7, shade(v));
+                cv.roundRect(1012, 196 + i * 38, 24, 24, 4, shade(v));
                 cv.text(n + ': ' + nearest(v.rgb) + ', ' + v.bright + '%', 1046, 215 + i * 38, 18, t.text);
             });
 
@@ -379,12 +399,12 @@ mgu.run({
             const bar = (B, label, value, ramp, f, minus, plus, key) => {
                 cv.text(label, B.x, B.y - 10, 18, t.dim);
                 cv.text(value, B.x + B.w, B.y - 10, 20, t.text, { align: 'right', font: 'bold', literal: true });
-                cv.rampRect(B.x, B.y, B.w, B.h, B.h / 2, ramp);
+                cv.rampRect(B.x, B.y, B.w, B.h, 4, ramp);
                 const kx = B.x + Math.max(0, Math.min(1, f)) * B.w;
-                cv.roundRect(kx - 8, B.y - 8, 16, B.h + 16, 8, withAlpha('#000000', 0.55));
-                cv.roundRect(kx - 6, B.y - 6, 12, B.h + 12, 6, '#ffffff');
-                G.button(cv, t, B.x - 56, B.y - 10, 48, 40, '-', minus, { key: key + '-' });
-                G.button(cv, t, B.x + B.w + 8, B.y - 10, 48, 40, '+', plus, { key: key + '+' });
+                cv.roundRect(kx - 7, B.y - 9, 14, B.h + 18, 4, withAlpha('#000000', 0.6));
+                cv.roundRect(kx - 5, B.y - 7, 10, B.h + 14, 2.5, '#ffffff');
+                btn(cv, t, B.x - 56, B.y - 10, 48, 40, '-', minus, { key: key + '-' });
+                btn(cv, t, B.x + B.w + 8, B.y - 10, 48, 40, '+', plus, { key: key + '+' });
             };
             bar(BARS.hue, 'Colour', Math.round(q.h) + '\u00b0', HUE_RAMP, q.h / 360, () => stepHue(-15), () => stepHue(15), 'h');
             bar(BARS.sat, 'Saturation', Math.round(q.s * 100) + '%', ['#ffffff', full], q.s, () => stepSat(-1), () => stepSat(1), 's');
@@ -396,14 +416,16 @@ mgu.run({
             if (others.comfort) return warnOthers(cv, t, 1272, 112, 288);
             Wh.CAR.forEach(([name, rgb], i) => {
                 const b = swatchBox(i), on = isOn() && rgb.every((v, j) => Math.abs(v - c.rgb[j]) <= 2);
-                cv.roundRect(b.x, b.y, b.w, b.h, 10, rgb);
-                cv.strokeRoundRect(b.x, b.y, b.w, b.h, 10, on ? 3 : 1.5, on ? '#ffffff' : withAlpha('#ffffff', 0.3));
-                cv.text(name, b.x + b.w / 2, b.y + b.h / 2 + 6, 17, textOn(rgb), { align: 'center', font: 'bold' });
+                cv.roundRect(b.x, b.y, b.w, b.h, FLAT.r, rgb);
+                cv.strokeRoundRect(b.x, b.y, b.w, b.h, FLAT.r, on ? 2.5 : 1.2, on ? '#ffffff' : withAlpha('#ffffff', 0.25));
+                const tw = cv.textWidth(name, 15) + 12;
+                cv.roundRect(b.x + 5, b.y + b.h - 25, tw, 20, 3, withAlpha('#0a0d12', 0.82));
+                cv.text(name, b.x + 11, b.y + b.h - 10, 15, '#ffffff');
                 if (cv.own) cv.target(b.x, b.y, b.w, b.h, () => setRgb(rgb), 'car-' + name);
             });
             if (editing) return editBar(cv, t, 1272, 372);
-            G.button(cv, t, 1272, 356, 288, 46, 'Original colour', () => { control.carColour(); return redraw(); }, { primary: !control.on(), key: 'car' });
-            return G.button(cv, t, 1272, 410, 288, 46, 'Save favourite', () => { control.saveFav(); return redraw(); }, { key: 'save' });
+            btn(cv, t, 1272, 356, 288, 46, 'Original colour', () => { control.carColour(); return redraw(); }, { on: !control.on(), key: 'car' });
+            return btn(cv, t, 1272, 410, 288, 46, 'Save favourite', () => { control.saveFav(); return redraw(); }, { key: 'save' });
         }
 
         // changing a driving mode's look: which mode, and Done back to the Driving modes tab
@@ -421,10 +443,10 @@ mgu.run({
             const now = ambient.slot();
             for (let i = 0; i < SLOTS; i++) {
                 const n = i + 1;
-                G.button(cv, t, x + (i % 4) * 132, 186 + Math.floor(i / 4) * 60, 120, 48, String(n), () => { ambient.setSlot(n); return redraw(); },
-                    { primary: n === now, busy: !ambient.available, key: 'slot-' + n });
+                btn(cv, t, x + (i % 4) * 132, 186 + Math.floor(i / 4) * 60, 120, 48, String(n), () => { ambient.setSlot(n); return redraw(); },
+                    { on: n === now, busy: !ambient.available, key: 'slot-' + n });
             }
-            G.button(cv, t, x, 366, 0, 46, 'Look again', () => { lights.find(); return redraw(); }, { key: 'again' });
+            btn(cv, t, x, 366, 160, 46, 'Look again', () => { lights.find(); return redraw(); }, { key: 'again' });
         }
 
         function drawAnimations(cv, t) {
