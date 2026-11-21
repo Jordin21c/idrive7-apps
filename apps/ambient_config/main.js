@@ -650,8 +650,14 @@ mgu.run({
             }, { primary: showing, key: 'show-go', confirm: !showing, busy: !strobe || !strobe.kind || strobe.running === 'strobe' || strobe.running === 'learn' });
         }
 
+        // whether the last frame was drawn with the app running the screen (its buttons drawn and tappable). The first
+        // frame can come before the renderer is ready: it has no buttons, and nothing else may ask for another, so a
+        // tick that finds this changed draws again
+        let ownDrawn = false;
+        const ownNow = () => { const d = ctx.display; return !!(d && d.own && d.active && d.own() && d.active()); };
         async function render() {
             const t = ctx.theme(), cv = ctx.canvas(W, H).clear(t.bg);
+            ownDrawn = !!cv.own;
             if (page >= tabs().length) page = 0;
             [drawColour, drawAnimations, drawModes, drawFavs, drawStrobe][page](cv, t);
             G.frame(cv, t, tabs(), page, []);
@@ -690,6 +696,7 @@ mgu.run({
             const due = moving && page <= 1 && Date.now() - movedAt >= MOVE_DRAW_MS;
             if (due) movedAt = Date.now();
             // (the Strobe tab: its checks follow the car, so it draws on each tick)
+            if (ownNow() !== ownDrawn) dirty = true;
             return dirty || due || page === 4 ? render() : null;
         };
 
