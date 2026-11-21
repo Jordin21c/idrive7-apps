@@ -41,7 +41,7 @@
  * before a strobe, light show or learn starts, hold(false) once it has ended.
  *
  *   const s = new Strobe({ diag, log, allowed, channels, hold });  await s.find();   s.kind -> 'flm' | 'fle' | 'bdc' | 'g05' | null
- *   s.start({ lights: 'all' | 'high', pattern: 'both' | 'alternate', rate: 'fast' | 'normal' | 'slow' })   s.show()   s.learn()   s.stop()
+ *   s.start({ lights: 'all' | 'high', pattern: 'both' | 'alternate' | 'police' | 'cycle', rate: 'fast' | 'normal' | 'slow' })   s.show()   s.learn()   s.stop()
  *   s.running -> 'strobe' | 'show' | 'learn' | null       s.note       s.on('change', fn)   s.on('learned', fn(channels))
  */
 const EventEmitter = require('events');
@@ -72,6 +72,28 @@ const POLICE_ORDERS = {
     lr: ['left', 'right'],
     lbr: ['left', 'both', 'right', 'both'],
 };
+/*
+ * Cycle: three patterns one after the other, round and round, so the flashing keeps changing (as the multi-pattern
+ * modes of headlight flashers do): double flashes left then right, both together three a second, single flashes left
+ * then right. One side at a time needs the other headlight held (police), and letting one go and holding the other
+ * is two requests (~400 ms), so the in-turn phases go as fast as that allows: about 0.8 s a side for the doubles,
+ * 0.6 s a flash for the singles. Both together is one request a flash and keeps its 3 a second.
+ */
+const CYCLE = [
+    { order: ['left', 'right'], burst: 2, gap: 0, rounds: 3 },
+    { order: ['both'], burst: 9, gap: 333, rounds: 1 },
+    { order: ['left', 'right'], burst: 1, gap: 0, rounds: 4 },
+];
+/** A cycle as police's steps: [{ side, burst, gap (ms from one flash to the next, at least) }]. */
+const cyclePlan = () => CYCLE.reduce((plan, c) => {
+    for (let r = 0; r < c.rounds; r++) c.order.forEach((side) => plan.push({ side, burst: c.burst, gap: c.gap }));
+    return plan;
+}, []);
+// the same on a car without headlight units to hold a side: the cornering lights are the sides, the high beam both
+const cycleFns = () => CYCLE.reduce((seq, c) => {
+    for (let r = 0; r < c.rounds; r++) c.order.forEach((side) => { for (let i = 0; i < c.burst; i++) seq.push(side === 'left' ? 'cornL' : side === 'right' ? 'cornR' : 'high'); });
+    return seq;
+}, []);
 /** A flash of ms milliseconds in the body controller's 10 ms steps: 30 to 150 ms. */
 const flashTicks = (ms) => Math.max(3, Math.min(15, Math.round((+ms || 100) / 10)));
 // the patterns, one function a request; police and in turn only ever one side at a time (the high beam is both)
@@ -81,6 +103,7 @@ const FN_PATTERNS = {
     police: { all: ['high', 'high', 'high', 'high', 'pause', 'pause'], high: ['high', 'high', 'high', 'high', 'pause', 'pause'] },
     both: { all: ['high', 'fog'], high: ['high'] },
     alternate: { all: ['cornL', 'cornR'], high: ['cornL', 'cornR'] },
+    cycle: { all: cycleFns(), high: cycleFns() },
 };
 const SHOW_ORDER = ['high', 'cornL', 'cornR', 'fog', 'indL', 'indR', 'parkL', 'parkR', 'brake', 'reverse', 'rearFog', 'ess'];
 const FL_L = 0x07, FL_R = 0x08;
@@ -374,8 +397,10 @@ class Strobe extends EventEmitter {
      */
     async _runPolice(flash, ms, o) {
         const t0 = this.now(), m = this.mask, H = m.head;
-        const phases = POLICE_ORDERS[o && o.order] || POLICE_ORDERS.lbr;
+        const cycle = !!o && o.pattern === 'cycle', name = cycle ? 'cycle' : 'police';
         const burst = Math.max(1, Math.min(4, +(o && o.burst) || POLICE_BURST));
+        // police: its order round and round, the same burst and pace each time; cycle: its own three phases
+        const plan = cycle ? cyclePlan() : (POLICE_ORDERS[o && o.order] || POLICE_ORDERS.lbr).map((side) => ({ side, burst, gap: flash.gap }));
         const base = {};
         let step = 0, end = null, held = null;
         try {
@@ -399,7 +424,7 @@ class Strobe extends EventEmitter {
                     if (hot !== null && hot >= HOT_C) { end = ['Strobe stopped: the headlights got hot (' + hot + ' °C)', 'warn']; break; }
                 }
                 // flashing the left side holds the right one, and the other way round; both: none held
-                const phase = phases[k % phases.length];
+                const now = plan[k % plan.length], phase = now.side;
                 const hold = phase === 'left' ? m.sides[1] : phase === 'right' ? m.sides[0] : null;
                 if (held !== hold) {
                     if (held !== null) await this._ask(held, 0x31, [0x02, 0x30, 0x00]);
@@ -410,7 +435,7 @@ class Strobe extends EventEmitter {
                         held = hold;
                     }
                 }
-                for (let i = 0; i < burst; i++) {
+                for (let i = 0; i < now.burst; i++) {
                     if (this._stop) break;
                     const stopWhy = this.allowed(this.running);
                     if (stopWhy) { end = ['Strobe stopped: ' + stopWhy, 'warn']; break; }
@@ -418,9 +443,9 @@ class Strobe extends EventEmitter {
                     const at = this.now();
                     const r = await this._fn('high', flash.on);
                     if (r !== true) { end = ['Strobe stopped: refused (' + r + ')', 'warn']; break; }
-                    if (step === 0) this._say('Strobe on · police');
+                    if (step === 0) this._say('Strobe on · ' + name);
                     step++;
-                    const left = flash.gap - (this.now() - at);
+                    const left = now.gap - (this.now() - at);
                     if (left > 0) await this.sleep(left);
                 }
             }
@@ -432,7 +457,7 @@ class Strobe extends EventEmitter {
             await this._ask(BDC, 0x10, [0x01]);
             this.running = null;
             if (step > 0) this._rest(t0);
-            this.log.info('strobe: ' + (end ? end[0] : 'ended') + ' after ' + step + ' flashes (police)');
+            this.log.info('strobe: ' + (end ? end[0] : 'ended') + ' after ' + step + ' flashes (' + name + ')');
             this._say(end ? end[0] : 'Strobe stopped', end ? end[1] : 'dim');
         }
     }
@@ -479,12 +504,14 @@ class Strobe extends EventEmitter {
             const base = FLASH[o && o.rate] || FLASH.fast;
             // every: the time from one flash to the next (ms; 0 or less than a request takes: as fast as it goes)
             const flash = { on: o && o.flashMs ? flashTicks(o.flashMs) : base.on, gap: o && o.every != null ? Math.max(0, Math.min(2000, +o.every || 0)) : base.gap };
-            if ((!o || !o.pattern || o.pattern === 'police') && this.mask) return this._runPolice(flash, MAX_MS, o);
+            if ((!o || !o.pattern || o.pattern === 'police' || o.pattern === 'cycle') && this.mask) return this._runPolice(flash, MAX_MS, o);
             return this._runFn(pat[o && o.lights === 'high' ? 'high' : 'all'], flash, MAX_MS, 'Strobe');
         }
         const head = !!this.head;
         // police: one headlight flashes, then the other, one write each (the fastest there is: ~200 ms a write)
-        const pattern = o && (o.pattern === 'alternate' || o.pattern === 'police') ? (o.pattern === 'police' && !head ? 'alternate' : o.pattern) : 'both';
+        // (cycle is the light functions' alone: here it is police, the nearest these lamps have)
+        const asked = o && o.pattern === 'cycle' ? 'police' : o && o.pattern;
+        const pattern = asked === 'alternate' || asked === 'police' ? (asked === 'police' && !head ? 'alternate' : asked) : 'both';
         const lights = o && o.lights === 'high' ? 'high' : 'all';
         const half = o && HALF_MS[o.rate] !== undefined ? HALF_MS[o.rate] : HALF_MS.normal;
         this.running = 'strobe'; this._stop = false; this._say('Strobe starting...');
@@ -718,4 +745,4 @@ function gateChecks(o) {
 }
 const gateWhy = (checks, what) => { const c = checks.find((x) => !x[1] && (!x[3] || x[3] === what)); return c ? c[0].toLowerCase() + ': no' : null; };
 
-module.exports = { gateChecks, gateWhy, Strobe, KINDS, HEAD, F, FN_PATTERNS, FLASH, POLICE_ORDERS, flashTicks, SIDES, FL_L, FL_R, HALF_MS, MAX_MS, SHOW_MS, statusIndex };
+module.exports = { gateChecks, gateWhy, Strobe, KINDS, HEAD, F, FN_PATTERNS, FLASH, POLICE_ORDERS, CYCLE, cyclePlan, flashTicks, SIDES, FL_L, FL_R, HALF_MS, MAX_MS, SHOW_MS, statusIndex };

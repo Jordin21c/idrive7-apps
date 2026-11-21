@@ -246,6 +246,61 @@ const writes = (diag, a) => diag.sent.filter((x) => x.indexOf(hex([a]) + ' 31 01
         ok(diag.sent.slice(n).every((x) => x.indexOf('A5 43') < 0), 'the lamp test only once');
     }
 
+    // cycle with the headlight units: double flashes left / right, both together 3 a second, single flashes left / right
+    {
+        const { CYCLE, cyclePlan } = require(path.join(__dirname, '..', '..', 'apps', 'ambient_config', 'strobe'));
+        const plan = cyclePlan();
+        ok(CYCLE.length === 3 && plan.length === 3 * 2 + 1 + 4 * 2 && plan[0].side === 'left' && plan[0].burst === 2 && plan[6].side === 'both' && plan[6].burst === 9 && plan[6].gap === 333 && plan[7].burst === 1,
+            'cycle: three phases, doubles in turn, nine together a third of a second apart, singles in turn');
+        const { s, diag } = make('fnflm');
+        await s.find(); diag.sent.length = 0;
+        const at = [];
+        const orig = diag.physical;
+        diag.physical = async (t, sid, data) => { if (sid === 0x2E && data[3] === 0x05 && data[5]) at.push(s._clock.t); return orig(t, sid, data); };
+        const run = s.start({ pattern: 'cycle', every: 0 });
+        stopAfter(s, diag, 70);
+        await run;
+        const seq = diag.sent.filter((x) => / 31 0[12] 30 00|2E D5 42 00 05 00 08/.test(x)).map((x) => /2E D5 42/.test(x) ? 'H' : x.slice(0, 2) + (/ 31 01/.test(x) ? 'hold' : 'free'));
+        const doubles = '44hold,H,H,44free,43hold,H,H,43free,44hold,H,H,44free,43hold,H,H,43free,44hold,H,H,44free,43hold,H,H';
+        const together = '43free,H,H,H,H,H,H,H,H,H';
+        const singles = '44hold,H,44free,43hold,H,43free,44hold,H,44free,43hold,H';
+        ok(seq.join().indexOf(doubles + ',' + together + ',' + singles) === 0, 'cycle: doubles left / right three times, nine together, then singles left / right (' + seq.join() + ')');
+        // the nine together are flashes 13 to 21
+        const gaps = at.slice(12, 21).map((v, i, a) => (i ? v - a[i - 1] : 0)).slice(1);
+        ok(gaps.length === 8 && gaps.every((g) => g >= 333 && g < 400), 'cycle: both together 3 a second (' + gaps.join() + ' ms apart)');
+        ok(/Strobe stopped/.test(s.note) && /40 2E D5 42 00 05 00 00,43 10 01,44 10 01,40 10 01$/.test(diag.sent.join()),
+            'cycle stopped: high beam off, every session back to default (' + diag.sent.slice(-5).join(', ') + ')');
+    }
+    // cycle, police's own settings left alone: its burst and order are police's, not the cycle's
+    {
+        const { s, diag } = make('fnflm');
+        await s.find(); diag.sent.length = 0;
+        const run = s.start({ pattern: 'cycle', burst: 4, order: 'lrb', every: 1000 });
+        stopAfter(s, diag, 20);
+        await run;
+        const seq = diag.sent.filter((x) => / 31 0[12] 30 00|2E D5 42 00 05 00 08/.test(x)).map((x) => /2E D5 42/.test(x) ? 'H' : x.slice(0, 2) + (/ 31 01/.test(x) ? 'hold' : 'free'));
+        ok(seq.slice(0, 7).join() === '44hold,H,H,44free,43hold,H,H', 'cycle keeps its own bursts whatever police is set to (' + seq.join() + ')');
+    }
+    // cycle without headlight units: the cornering lights are the sides, the high beam both
+    {
+        const { s, diag } = make('fn');
+        await s.find(); diag.sent.length = 0;
+        const run = s.start({ pattern: 'cycle', lights: 'all', every: 0 });
+        stopAfter(s, diag, 34);
+        await run;
+        const f = fns(diag).filter((x) => x[3] !== 0).map((x) => x[1]);
+        ok(f.slice(0, 29).join() === '9,9,10,10,9,9,10,10,9,9,10,10,5,5,5,5,5,5,5,5,5,9,10,9,10,9,10,9,10', 'cycle on the light functions alone: cornering left / right doubles, nine high beam, cornering singles (' + f.join() + ')');
+    }
+    // cycle on the headlight units' own channels: police, the nearest they have
+    {
+        const a = make('flm'), b = make('flm');
+        await a.s.find(); await b.s.find(); a.diag.sent.length = 0; b.diag.sent.length = 0;
+        const ra = a.s.start({ pattern: 'cycle', rate: 'fast' }), rb = b.s.start({ pattern: 'police', rate: 'fast' });
+        stopAfter(a.s, a.diag, 30); stopAfter(b.s, b.diag, 30);
+        await ra; await rb;
+        ok(a.diag.sent.slice(0, 30).join() === b.diag.sent.slice(0, 30).join(), 'cycle on FLM01 channels: the same requests as police');
+    }
+
     // FLM01, police: one side's flash at a time, one write each, from dark
     {
         const { s, diag } = make('flm');

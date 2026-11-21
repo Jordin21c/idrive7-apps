@@ -65,11 +65,12 @@ const DAY_NIGHT = { KEINE_AENDERUNG: 0, TAG: 1, NACHT: 2, SIGNAL_UNGUELTIG: 3 };
 /* The strobe's options as the Strobe page has them (its buttons' settings), for its Start and the flasher lever. */
 function strobeOptions(settings, strobe) {
     const cyc = (key, vals, def) => { const v = String(settings.get(key) || def); return vals.indexOf(v) >= 0 ? v : def; };
-    const pattern = ['both', 'alternate', 'police'].indexOf(settings.get('strobePattern')) >= 0 ? settings.get('strobePattern') : 'police';
+    const pattern = ['both', 'alternate', 'police', 'cycle'].indexOf(settings.get('strobePattern')) >= 0 ? settings.get('strobePattern') : 'police';
     const o = { lights: strobe && strobe.patterns && settings.get('strobeLights') === 'high' ? 'high' : 'all', pattern,
         rate: settings.get('strobeRate') || 'normal', burst: cyc('policeBurst', ['1', '2', '3', '4'], '4'),
         flashMs: cyc('strobeFlashMs', ['50', '80', '100', '150'], '80'), order: cyc('policeOrder', ['lbr', 'lrb', 'lr'], 'lbr') };
-    if (strobe && strobe.kind === 'fn') o.every = +cyc('strobeEvery', ['0', '250', '333', '500', '1000'], '0');
+    // (cycle has its own pace for each of its phases)
+    if (strobe && strobe.kind === 'fn') o.every = pattern === 'cycle' ? 0 : +cyc('strobeEvery', ['0', '250', '333', '500', '1000'], '0');
     return o;
 }
 
@@ -469,7 +470,7 @@ mgu.run({
             G.button(cv, t, 520, 190, 220, 42, lever ? 'Lever start: On' : 'Lever start: Off', () => { settings.set('strobeLever', !lever); return redraw(); },
                 { primary: lever, key: 'strobe-lever', busy: !strobe });
             if (strobe && strobe.note) cv.text(strobe.note, 44, 248, 18, strobe.noteType === 'warn' ? t.warn : t.dim);
-            const pat = ['both', 'alternate', 'police'].indexOf(settings.get('strobePattern')) >= 0 ? settings.get('strobePattern') : 'police';
+            const pat = ['both', 'alternate', 'police', 'cycle'].indexOf(settings.get('strobePattern')) >= 0 ? settings.get('strobePattern') : 'police';
             const rate = settings.get('strobeRate') || 'normal';
             // the headlight units can flash every front light; the body controller only the high beams
             const lights = strobe && strobe.patterns && settings.get('strobeLights') === 'high' ? 'high' : 'all';
@@ -508,14 +509,19 @@ mgu.run({
             }
             cv.text('Pattern', 44, 346, 18, t.dim);
             // police: one headlight, then the other, the fastest there is (headlight units only)
-            const pats = [['police', 'Police'], ['both', 'Strobe'], ['alternate', 'In turn']].filter(([k]) => k !== 'police' || (strobe && strobe.patterns));
+            // cycle: three patterns one after the other (the body controller's timed flashes only)
+            const pats = [['police', 'Police'], ['both', 'Strobe'], ['alternate', 'In turn'], ['cycle', 'Cycle']]
+                .filter(([k]) => (k !== 'police' || (strobe && strobe.patterns)) && (k !== 'cycle' || (strobe && strobe.kind === 'fn')));
             pats.forEach(([k, n], i) => {
                 G.button(cv, t, 44 + i * 150, 356, 140, 42, n, () => { settings.set('strobePattern', k); return redraw(); }, { primary: pat === k, key: 'pat-' + k });
             });
             // the body controller's timed flashes: how often, as flashes a second (Max: as fast as the head unit passes them)
             const timed = strobe && strobe.kind === 'fn';
             const every = cyc('strobeEvery', ['0', '250', '333', '500', '1000'], '0');
-            if (timed) {
+            if (timed && pat === 'cycle') {
+                cv.text('Cycle: double flashes left and right, both together 3 a second,', 44, 436, 18, t.dim);
+                cv.text('single flashes left and right, round and round.', 44, 460, 18, t.dim);
+            } else if (timed) {
                 cv.text('Flashes a second', 44, 418, 18, t.dim);
                 [['0', 'Max'], ['250', '4'], ['333', '3'], ['500', '2'], ['1000', '1']].forEach(([k, n], i) => {
                     G.button(cv, t, 44 + i * 94, 428, 86, 48, n, () => { settings.set('strobeEvery', k); return redraw(); }, { primary: every === k, key: 'every-' + k });
