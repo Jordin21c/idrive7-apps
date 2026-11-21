@@ -3,8 +3,10 @@
  * Ambient config - any colour on the car's ambient light, animations, and a look for each driving mode.
  *
  * Tabs:
- *   Colour         the colour ring (and white) for the whole car, the upper lights or the lower ones, the
- *                  brightness, and the car from above lit as the car is; Original colour gives the light back
+ *   Colour         the colour wheel (every hue around it, white in the middle) with bars for the colour, the
+ *                  saturation and the brightness, the car's nine menu colours and white, for the whole car, the
+ *                  upper lights or the lower ones, and the car from above lit as the car is; Original colour
+ *                  gives the light back
  *   Animations     Solid, Breathing, Rainbow, Smooth fade, Colour wave, how fast, shown moving on the car picture;
  *                  Turn signal glow (that side's door lines blink green with it), Open door red (its line blinking) and
  *                  Hazard red (every light pulses red while the hazards are on), each off until switched on
@@ -34,13 +36,19 @@ const { t: translate } = require('./kit/i18n');
 const { drawCabin } = require('./cabin');
 const { sample } = require('./lin');
 const S = require('./scenes');
+const Wh = require('./wheel');
 
 const W = 1600, H = 520;
 const TABS = ['Colour', 'Animations', 'Driving modes', 'Favourites'];
 const MODE_NAMES = { sport: 'Sport', comfort: 'Comfort', eco: 'Eco Pro', adaptive: 'Adaptive', hybrid: 'Hybrid', electric: 'Electric' };
 const QUICK = [['Red', [255, 0, 0]], ['Orange', [255, 100, 0]], ['Amber', [255, 170, 0]], ['Yellow', [255, 235, 0]], ['Green', [0, 255, 60]],
     ['Cyan', [0, 230, 255]], ['Blue', [0, 70, 255]], ['Violet', [120, 60, 255]], ['Pink', [255, 40, 170]], ['White', [255, 255, 255]]];
-const RING = { cx: 290, cy: 288, R: 186, r: 136 }, DIAL = { cx: 655, cy: 400, R: 54, r: 43 };
+// the Colour tab: the wheel, the three bars (each with - and + at its ends), the car's colours in two rows of five
+const WHEEL = { cx: 196, cy: 262, R: 150 }, WHEEL_BANDS = Wh.rings(15);
+const BAR = { x: 428, w: 252, h: 22 }, BARS = { hue: Object.assign({ y: 126 }, BAR), sat: Object.assign({ y: 198 }, BAR), bright: Object.assign({ y: 270 }, BAR) };
+const HUE_RAMP = ['#ff0000', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#ff00ff', '#ff0000'];
+const SWATCH = { x: 372, y: 342, w: 68, h: 36, dx: 74, dy: 44, cols: 5 };
+const swatchBox = (i) => ({ x: SWATCH.x + (i % SWATCH.cols) * SWATCH.dx, y: SWATCH.y + Math.floor(i / SWATCH.cols) * SWATCH.dy, w: SWATCH.w, h: SWATCH.h });
 
 const ON_BY_DEFAULT = ['follow', 'flashAlerts'];
 const MOVE_DRAW_MS = 250;            // a moving scene's picture: at most 4 a second
@@ -260,7 +268,19 @@ mgu.run({
             setLook({ upper: l.upper, lower: l.lower });
             return redraw();
         };
-        const stepHue = (d) => { const c = partColour(look()); return setRgb(S.hsv(S.stepHue(S.hueOf(c.rgb), d), 1, 1)); };
+        // the hue and saturation of a colour. A pale colour's RGB has its hue only roughly (white: not at all), so the
+        // hue last picked stands while it still gives this colour
+        let hueMem = null;
+        const hsOf = (c) => {
+            const s = Wh.satOf(c.rgb);
+            const kept = hueMem != null && Wh.colour(hueMem, s).every((v, i) => Math.abs(v - c.rgb[i]) <= 2);
+            if (!kept && s > 0.02) hueMem = S.hueOf(c.rgb);
+            return { h: hueMem == null ? 0 : hueMem, s };
+        };
+        const setHs = (h, s) => { hueMem = ((h % 360) + 360) % 360; return setRgb(Wh.colour(hueMem, s)); };
+        // (stepping the hue of white: the full colour, or nothing would change)
+        const stepHue = (d) => { const q = hsOf(partColour(look())); return setHs(S.stepHue(q.h, d), q.s < 0.05 ? 1 : q.s); };
+        const stepSat = (d) => { const q = hsOf(partColour(look())); return setHs(q.h, Math.max(0, Math.min(1, Math.round(q.s * 10 + d) / 10))); };
 
         // another ambient app's service writing the same lights: says so in place of the status, wrapped to width w
         const COMFORT_WARNING = 'IterioDev\'s Comfort tool has its ambient colour on and changes the same lights, so Ambient config ' +
@@ -292,31 +312,45 @@ mgu.run({
         const carNow = (l) => (lights.scene ? lights.at(l) : null);
 
         function drawColour(cv, t) {
-            const l = look(), c = partColour(l), sel = nearest(c.rgb);
+            const l = look(), c = partColour(l);
             G.panel(cv, t, 24, 44, 736, 468, editing ? 'Colour for ' + MODE_NAMES[editing] : 'Colour');
-            cv.arc(RING.cx, RING.cy, RING.r, RING.R, 0, 360, '#ff0000', { ramp: ['#ff0000', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#ff00ff', '#ff0000'], rampFrom: 0, rampTo: 360 });
-            const h = S.hueOf(c.rgb), a = (90 - h) * Math.PI / 180, rm = (RING.R + RING.r) / 2;
-            const kx = RING.cx + Math.cos(a) * rm, ky = RING.cy - Math.sin(a) * rm;
-            cv.arc(kx, ky, 0, 22, 0, 360, '#ffffff'); cv.arc(kx, ky, 0, 16, 0, 360, S.hsv(h, 1, 1));
-            const shownRgb = c.rgb.map((x) => Math.round(x * (0.35 + 0.65 * c.bright / 100)));
-            cv.arc(RING.cx, RING.cy, 0, RING.r - 18, 0, 360, shownRgb);
-            cv.text(nearest(c.rgb), RING.cx, RING.cy + 4, 38, textOn(shownRgb), { align: 'center', font: 'bold' });
-            cv.text(part === 'all' ? 'Whole car' : part === 'upper' ? 'Upper lights' : 'Lower lights', RING.cx, RING.cy + 40, 20, textOn(shownRgb), { align: 'center' });
-            G.button(cv, t, 44, 446, 56, 48, '<', () => stepHue(-15), { key: 'h-' });
-            G.button(cv, t, 480, 446, 56, 48, '>', () => stepHue(15), { key: 'h+' });
-
-            cv.text('Colouring', 566, 92, 20, t.dim);
-            [['all', 'Whole car'], ['upper', 'Upper lights'], ['lower', 'Lower lights']].forEach(([k, n], i) => {
-                G.button(cv, t, 566, 104 + i * 56, 176, 46, n, () => { part = k; return redraw(); }, { primary: part === k, key: 'part-' + k });
+            const q = hsOf(c), full = S.hex(Wh.colour(q.h, 1)), now = S.hex(Wh.colour(q.h, q.s));
+            // the wheel: white in the middle, band by band out to the full colours, the knob where the colour is
+            WHEEL_BANDS.forEach((b, i) => {
+                if (!i) return cv.arc(WHEEL.cx, WHEEL.cy, 0, b.r1 * WHEEL.R + 1, 0, 360, '#ffffff');
+                return cv.arc(WHEEL.cx, WHEEL.cy, b.r0 * WHEEL.R, Math.min(WHEEL.R, b.r1 * WHEEL.R + 1), 0, 360, b.ramp[0], { ramp: b.ramp, rampFrom: 0, rampTo: 360 });
             });
-            // the ring has every colour at its fullest: white is its own button
-            G.button(cv, t, 566, 272, 176, 46, 'White', () => setRgb([255, 255, 255]), { primary: isOn() && sel === 'White', key: 'white' });
-            cv.arc(DIAL.cx, DIAL.cy, DIAL.r, DIAL.R, -135, 135, withAlpha('#ffffff', 0.12), { round: true });
-            cv.arc(DIAL.cx, DIAL.cy, DIAL.r, DIAL.R, -135, -135 + 270 * c.bright / 100, S.hsv(h, 1, 1), { round: true });
-            cv.text(c.bright + '%', DIAL.cx, DIAL.cy + 6, 28, t.text, { align: 'center', font: 'bold' });
-            cv.text('Brightness', DIAL.cx, DIAL.cy + 32, 15, t.dim, { align: 'center' });
-            G.button(cv, t, 580, 464, 64, 44, '-', () => setBright(c.bright - 10), { key: 'b-' });
-            G.button(cv, t, 666, 464, 64, 44, '+', () => setBright(c.bright + 10), { key: 'b+' });
+            cv.arc(WHEEL.cx, WHEEL.cy, WHEEL.R, WHEEL.R + 2, 0, 360, withAlpha('#ffffff', 0.22));
+            const k = Wh.wheelPos(WHEEL, q.h, q.s);
+            cv.arc(k.x, k.y, 0, 19, 0, 360, withAlpha('#000000', 0.55)); cv.arc(k.x, k.y, 0, 16, 0, 360, '#ffffff'); cv.arc(k.x, k.y, 0, 12, 0, 360, now);
+
+            // the bars: the colour, how much of it (white to the full colour), the brightness; - and + step them
+            const bar = (B, label, value, ramp, f, minus, plus, key) => {
+                cv.text(label, B.x, B.y - 10, 18, t.dim);
+                cv.text(value, B.x + B.w, B.y - 10, 20, t.text, { align: 'right', font: 'bold', literal: true });
+                cv.rampRect(B.x, B.y, B.w, B.h, B.h / 2, ramp);
+                const kx = B.x + Math.max(0, Math.min(1, f)) * B.w;
+                cv.roundRect(kx - 8, B.y - 8, 16, B.h + 16, 8, withAlpha('#000000', 0.55));
+                cv.roundRect(kx - 6, B.y - 6, 12, B.h + 12, 6, '#ffffff');
+                G.button(cv, t, B.x - 56, B.y - 9, 48, 40, '-', minus, { key: key + '-' });
+                G.button(cv, t, B.x + B.w + 8, B.y - 9, 48, 40, '+', plus, { key: key + '+' });
+            };
+            bar(BARS.hue, 'Colour', Math.round(q.h) + '\u00b0', HUE_RAMP, q.h / 360, () => stepHue(-15), () => stepHue(15), 'h');
+            bar(BARS.sat, 'Saturation', Math.round(q.s * 100) + '%', ['#ffffff', full], q.s, () => stepSat(-1), () => stepSat(1), 's');
+            bar(BARS.bright, 'Brightness', c.bright + '%', ['#20242c', now], (c.bright - 5) / 95, () => setBright(c.bright - 10), () => setBright(c.bright + 10), 'b');
+
+            // the car's menu colours and white: starting points, the wheel and the bars take it from there
+            cv.text('The car\'s colours', SWATCH.x, SWATCH.y - 12, 18, t.dim);
+            Wh.CAR.forEach(([name, rgb], i) => {
+                const b = swatchBox(i), on = isOn() && rgb.every((v, j) => Math.abs(v - c.rgb[j]) <= 2);
+                cv.roundRect(b.x, b.y, b.w, b.h, 9, rgb);
+                cv.strokeRoundRect(b.x, b.y, b.w, b.h, 9, on ? 3 : 1.5, on ? '#ffffff' : withAlpha('#ffffff', 0.3));
+                if (cv.own) cv.target(b.x, b.y, b.w, b.h, () => setRgb(rgb), 'car-' + name);
+            });
+
+            [['all', 'Whole car'], ['upper', 'Upper lights'], ['lower', 'Lower lights']].forEach(([key, n], i) => {
+                G.button(cv, t, 44 + i * 236, 456, 220, 46, n, () => { part = key; return redraw(); }, { primary: part === key, key: 'part-' + key });
+            });
 
             G.panel(cv, t, 776, 44, 800, 468, editing ? MODE_NAMES[editing] + ' will look' : 'In the car');
             if (lights.state === 'none' && !editing) return drawBmwColours(cv, t);
@@ -597,29 +631,33 @@ mgu.run({
             return dirty || due || page === 4 ? render() : null;
         };
 
-        // the colour ring and the brightness dial under a finger (Colour tab): 'ring' or 'dial', else null
-        const ringAt = (x, y) => { const dx = x - RING.cx, dy = y - RING.cy, d = Math.sqrt(dx * dx + dy * dy); return d >= RING.r - 12 && d <= RING.R + 12; };
-        const dialAt = (x, y) => {
-            const ex = x - DIAL.cx, ey = y - DIAL.cy, e = Math.sqrt(ex * ex + ey * ey), a = Math.atan2(ex, -ey) * 180 / Math.PI;
-            return e >= DIAL.r - 14 && e <= DIAL.R + 14 && a >= -140 && a <= 140;
+        // the wheel and the bars under a finger (Colour tab): 'wheel', 'hue', 'sat' or 'bright', else null
+        const whatAt = (x, y) => (Wh.wheelAt(WHEEL, x, y) ? 'wheel' : ['hue', 'sat', 'bright'].find((n) => Wh.barAt(BARS[n], x, y) != null) || null);
+        const swatchAt = (x, y) => Wh.CAR.findIndex((_, i) => { const b = swatchBox(i); return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h; });
+        // what a finger at x, y on the wheel or a bar sets (a finger dragged off it: its nearest place)
+        const applyAt = (what, x, y) => {
+            const q = hsOf(partColour(look()));
+            if (what === 'wheel') { const p = Wh.wheelAt(WHEEL, x, y, true); return setHs(p.h, p.s); }
+            const f = Wh.barF(BARS[what], x);
+            if (what === 'hue') return setHs(S.snapHue(f * 360) % 360, q.s < 0.05 ? 1 : q.s);
+            if (what === 'sat') return setHs(q.h, Math.round(f * 100) / 100);
+            return setBright(5 + f * 95);
         };
-        const hueAt = (x, y) => S.snapHue((Math.atan2(x - RING.cx, -(y - RING.cy)) * 180 / Math.PI + 360) % 360);
-        const brightAt = (x, y) => (Math.max(-135, Math.min(135, Math.atan2(x - DIAL.cx, -(y - DIAL.cy)) * 180 / Math.PI)) + 135) / 270 * 100;
-        // a finger on the ring or the dial: the colour or the brightness follows it while it moves, sent to the lights at
+        // a finger on the wheel or a bar: the colour or the brightness follows it while it moves, sent to the lights at
         // most every DRAG_MS and once more where it lets go (a tap: there at once)
         const DRAG_MS = 120;
-        let drag = null;                                    // { what: 'ring' | 'dial', at, x, y, timer }
+        let drag = null;                                    // { what, at, x, y, timer }
         const dragApply = () => {
             if (!drag) return null;
             drag.at = Date.now(); clearTimeout(drag.timer); drag.timer = null;
-            return drag.what === 'ring' ? setRgb(S.hsv(hueAt(drag.x, drag.y), 1, 1)) : setBright(brightAt(drag.x, drag.y));
+            return applyAt(drag.what, drag.x, drag.y);
         };
         if (ctx.onTouch) {
             ctx.onTouch((phase, x, y) => {
                 if (phase === 1) {
                     drag = null;
                     if (page !== 0) return false;
-                    const what = ringAt(x, y) ? 'ring' : dialAt(x, y) ? 'dial' : null;
+                    const what = whatAt(x, y);
                     if (!what) return false;
                     drag = { what, at: 0, x, y, timer: null };
                     dragApply();
@@ -635,9 +673,9 @@ mgu.run({
         } else if (ctx.onTap) {
             ctx.onTap((x, y) => {
                 if (page !== 0) return null;
-                if (ringAt(x, y)) return setRgb(S.hsv(hueAt(x, y), 1, 1));
-                if (dialAt(x, y)) return setBright(brightAt(x, y));
-                return null;
+                const what = whatAt(x, y), sw = what ? -1 : swatchAt(x, y);
+                if (what) return applyAt(what, x, y);
+                return sw >= 0 ? setRgb(Wh.CAR[sw][1]) : null;
             });
         }
         ctx.onTab((i) => { page = i; if (i >= 2) editing = null; if (i === 4) strobeSeen = Date.now(); pauseCheck(); return redraw(); });
