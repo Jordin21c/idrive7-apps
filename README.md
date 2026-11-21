@@ -117,7 +117,7 @@ More in [How apps draw](#44-how-apps-draw-remote-hmi-rhmi) and [`kit/renderd`](k
 <td><img src="docs/screens/dtc_scanner.png" alt="Fault Scanner"><br><b>Fault Scanner</b>: fault codes of every control unit, with their texts; Check Control messages</td>
 </tr>
 <tr>
-<td><img src="docs/screens/ambient_config.png" alt="Ambient config, colour page"><br><b>Ambient config</b>: any colour on the colour wheel (white in the middle), bars for colour, saturation and brightness, whole car or upper / lower lights; driving-mode colours, animations and favourites</td>
+<td><img src="docs/screens/ambient_config.png" alt="Ambient config, colour page"><br><b>Ambient config</b>: the cabin lit in the colours you pick, any colour on the colour wheel (white in the middle), bars for colour, saturation and brightness, whole car or upper / lower lights; driving-mode colours, animations and favourites</td>
 <td><img src="docs/screens/service.png" alt="Service"><br><b>Service</b>: service requirements, next service, details per item; an Engine page with oil life, spark plugs, engine hours and the particulate filter</td>
 </tr>
 <tr>

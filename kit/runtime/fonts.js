@@ -10,15 +10,22 @@ const zlib = require('zlib');
 const DIR = path.join(__dirname, 'fonts');
 const families = Object.create(null);
 
+const sizesOf = (name, j) => j.sizes.map((s) => ({
+    size: s.size, ascent: s.ascent, descent: s.descent, atlasW: s.atlasW, atlasH: s.atlasH,
+    glyphs: s.glyphs, _alpha: s.alpha, alpha: null, family: name, cacheKey: j.cacheKey || '',
+}));
+
+/**
+ * A family an app brings itself, in the shape bake_fonts.py writes ({ cacheKey, sizes: [...] }): e.g. a picture as
+ * alpha glyphs, which the renderer tints like text. Its name must not be one of the kit's.
+ */
+function add(name, j) { families[name] = sizesOf(name, j); }
+
 function family(name) {
     if (families[name] !== undefined) return families[name];
     let fam = null;
     try {
-        const j = JSON.parse(fs.readFileSync(path.join(DIR, name + '.json'), 'utf8'));
-        fam = j.sizes.map((s) => ({
-            size: s.size, ascent: s.ascent, descent: s.descent, atlasW: s.atlasW, atlasH: s.atlasH,
-            glyphs: s.glyphs, _alpha: s.alpha, alpha: null, family: name, cacheKey: j.cacheKey || '',
-        }));
+        fam = sizesOf(name, JSON.parse(fs.readFileSync(path.join(DIR, name + '.json'), 'utf8')));
     } catch (e) { fam = null; }
     families[name] = fam;
     return fam;
@@ -91,4 +98,4 @@ function measure(f, s) {
     return w;
 }
 
-module.exports = { get, has, measure, piece, PIECE_H };
+module.exports = { get, has, add, measure, piece, PIECE_H };

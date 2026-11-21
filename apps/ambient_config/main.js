@@ -3,10 +3,10 @@
  * Ambient config - any colour on the car's ambient light, animations, and a look for each driving mode.
  *
  * Tabs:
- *   Colour         the colour wheel (every hue around it, white in the middle) with bars for the colour, the
- *                  saturation and the brightness, the car's nine menu colours and white, for the whole car, the
- *                  upper lights or the lower ones, and the car from above lit as the car is; Original colour
- *                  gives the light back
+ *   Colour         the cabin lit as the car is (picture.js), under it what is coloured: the whole car, the upper
+ *                  lights or the lower ones; the colour wheel (every hue around it, white in the middle) with
+ *                  bars for the colour, the saturation and the brightness; the car's nine menu colours and white;
+ *                  Original colour gives the light back
  *   Animations     Solid, Breathing, Rainbow, Smooth fade, Colour wave, how fast, shown moving on the car picture;
  *                  Turn signal glow (that side's door lines blink green with it), Open door red (its line blinking) and
  *                  Hazard red (every light pulses red while the hazards are on), each off until switched on
@@ -37,18 +37,24 @@ const { drawCabin } = require('./cabin');
 const { sample } = require('./lin');
 const S = require('./scenes');
 const Wh = require('./wheel');
+const { drawInterior } = require('./picture');
 
 const W = 1600, H = 520;
 const TABS = ['Colour', 'Animations', 'Driving modes', 'Favourites'];
 const MODE_NAMES = { sport: 'Sport', comfort: 'Comfort', eco: 'Eco Pro', adaptive: 'Adaptive', hybrid: 'Hybrid', electric: 'Electric' };
 const QUICK = [['Red', [255, 0, 0]], ['Orange', [255, 100, 0]], ['Amber', [255, 170, 0]], ['Yellow', [255, 235, 0]], ['Green', [0, 255, 60]],
     ['Cyan', [0, 230, 255]], ['Blue', [0, 70, 255]], ['Violet', [120, 60, 255]], ['Pink', [255, 40, 170]], ['White', [255, 255, 255]]];
-// the Colour tab: the wheel, the three bars (each with - and + at its ends), the car's colours in two rows of five
-const WHEEL = { cx: 196, cy: 262, R: 150 }, WHEEL_BANDS = Wh.rings(15);
-const BAR = { x: 428, w: 252, h: 22 }, BARS = { hue: Object.assign({ y: 126 }, BAR), sat: Object.assign({ y: 198 }, BAR), bright: Object.assign({ y: 270 }, BAR) };
+// the Colour tab, left to right: the cabin picture with the three parts under it, the wheel with the three bars (each
+// with - and + at its ends), the car's colours in five rows of two
+const PICTURE = { x: 40, y: 92, w: 668 };
+const PARTS = [['all', 'Whole car', 'Every light'], ['upper', 'Upper lights', 'Lines and decor'], ['lower', 'Lower lights', 'Footwells, pockets']];
+const partBox = (i) => ({ x: 40 + i * 226, y: 422, w: 216, h: 74 });
+const WHEEL = { cx: 870, cy: 222, R: 118 }, WHEEL_BANDS = Wh.rings(15);
+const BAR = { x: 812, w: 356, h: 20 }, BARS = { hue: Object.assign({ y: 374 }, BAR), sat: Object.assign({ y: 426 }, BAR), bright: Object.assign({ y: 478 }, BAR) };
 const HUE_RAMP = ['#ff0000', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#ff00ff', '#ff0000'];
-const SWATCH = { x: 372, y: 342, w: 68, h: 36, dx: 74, dy: 44, cols: 5 };
+const SWATCH = { x: 1272, y: 100, w: 140, h: 40, dx: 148, dy: 48, cols: 2 };
 const swatchBox = (i) => ({ x: SWATCH.x + (i % SWATCH.cols) * SWATCH.dx, y: SWATCH.y + Math.floor(i / SWATCH.cols) * SWATCH.dy, w: SWATCH.w, h: SWATCH.h });
+const inBox = (b, x, y) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
 
 const ON_BY_DEFAULT = ['follow', 'flashAlerts'];
 const MOVE_DRAW_MS = 250;            // a moving scene's picture: at most 4 a second
@@ -311,11 +317,48 @@ mgu.run({
         // the car picture: the lights as the car shows them (the car's own colour: grey)
         const carNow = (l) => (lights.scene ? lights.at(l) : null);
 
+        // the Colour tab's status, one line beside the picture's title (Comfort's warning has the colours' panel)
+        function statusLine(cv, t, xRight, y) {
+            if (others.comfort) return;
+            const n = lights.lights.length;
+            const text = lights.error && lights.state !== 'none' ? lights.error
+                : lights.state === 'finding' ? 'Looking for the car\'s lights...'
+                    : lights.state === 'none' ? 'The car\'s lights did not answer'
+                        : lights.state === 'car' ? 'Original colour (as set in BMW\'s menu)' : 'On in the car: ' + n + ' lights';
+            cv.text(text, xRight, y, 18, lights.state === 'none' || lights.error ? t.warn : t.dim, { align: 'right' });
+        }
+        // what a part shows in the picture: its first light as the car has it (or as a driving mode's look will)
+        const partShows = (l, key) => {
+            const light = shown().find((x) => S.partOf(x) === key);
+            return light ? pictureOf(carNow, l)(light) : null;
+        };
+
         function drawColour(cv, t) {
             const l = look(), c = partColour(l);
-            G.panel(cv, t, 24, 44, 736, 468, editing ? 'Colour for ' + MODE_NAMES[editing] : 'Colour');
             const q = hsOf(c), full = S.hex(Wh.colour(q.h, 1)), now = S.hex(Wh.colour(q.h, q.s));
-            // the wheel: white in the middle, band by band out to the full colours, the knob where the colour is
+            const shade = (v) => v.rgb.map((x) => Math.round(x * (0.35 + 0.65 * v.bright / 100)));
+
+            // left: the cabin lit as the car is, and which of its lights the wheel colours
+            G.panel(cv, t, 24, 44, 700, 468, editing ? MODE_NAMES[editing] + ' will look' : 'In the car');
+            if (!editing) statusLine(cv, t, 708, 78);
+            if (lights.state === 'none' && !editing) drawBmwColours(cv, t, 40);
+            else drawInterior(cv, PICTURE, partShows(l, 'upper'), partShows(l, 'lower'), { dim: part === 'upper' ? 'lower' : part === 'lower' ? 'upper' : null });
+            PARTS.forEach(([key, name, what], i) => {
+                const b = partBox(i), on = part === key, S0 = t.sel || t.accent;
+                cv.roundRect(b.x, b.y, b.w, b.h, 16, on ? withAlpha(S0, 0.85) : withAlpha('#ffffff', 0.07));
+                if (!on) cv.strokeRoundRect(b.x, b.y, b.w, b.h, 16, 1.5, withAlpha('#ffffff', 0.3));
+                const cx = b.x + 36, cy = b.y + b.h / 2;
+                cv.arc(cx, cy, 0, 19, 0, 360, '#ffffff');
+                if (key === 'all') { cv.arc(cx, cy, 0, 16, 180, 360, shade(l.upper)); cv.arc(cx, cy, 0, 16, 0, 180, shade(l.lower)); }
+                else cv.arc(cx, cy, 0, 16, 0, 360, shade(l[key]));
+                cv.text(name, b.x + 66, cy - 2, 21, '#ffffff', { font: 'bold' });
+                cv.text(what, b.x + 66, cy + 21, 15, on ? withAlpha('#ffffff', 0.85) : t.dim);
+                if (cv.own) cv.target(b.x, b.y, b.w, b.h, () => { part = key; return redraw(); }, 'part-' + key);
+            });
+
+            // middle: the wheel (white in the middle, band by band out to the full colours, the knob where the colour
+            // is), the colour it gives beside it, the three bars under it
+            G.panel(cv, t, 740, 44, 500, 468, editing ? 'Colour for ' + MODE_NAMES[editing] : 'Colour');
             WHEEL_BANDS.forEach((b, i) => {
                 if (!i) return cv.arc(WHEEL.cx, WHEEL.cy, 0, b.r1 * WHEEL.R + 1, 0, 360, '#ffffff');
                 return cv.arc(WHEEL.cx, WHEEL.cy, b.r0 * WHEEL.R, Math.min(WHEEL.R, b.r1 * WHEEL.R + 1), 0, 360, b.ramp[0], { ramp: b.ramp, rampFrom: 0, rampTo: 360 });
@@ -323,6 +366,14 @@ mgu.run({
             cv.arc(WHEEL.cx, WHEEL.cy, WHEEL.R, WHEEL.R + 2, 0, 360, withAlpha('#ffffff', 0.22));
             const k = Wh.wheelPos(WHEEL, q.h, q.s);
             cv.arc(k.x, k.y, 0, 19, 0, 360, withAlpha('#000000', 0.55)); cv.arc(k.x, k.y, 0, 16, 0, 360, '#ffffff'); cv.arc(k.x, k.y, 0, 12, 0, 360, now);
+
+            const shownRgb = shade(c);
+            cv.roundRect(1012, 108, 212, 64, 14, shownRgb);
+            cv.text(nearest(c.rgb), 1118, 149, 26, textOn(shownRgb), { align: 'center', font: 'bold' });
+            [['Upper', l.upper], ['Lower', l.lower]].forEach(([n, v], i) => {
+                cv.roundRect(1012, 196 + i * 38, 24, 24, 7, shade(v));
+                cv.text(n + ': ' + nearest(v.rgb) + ', ' + v.bright + '%', 1046, 215 + i * 38, 18, t.text);
+            });
 
             // the bars: the colour, how much of it (white to the full colour), the brightness; - and + step them
             const bar = (B, label, value, ramp, f, minus, plus, key) => {
@@ -332,59 +383,48 @@ mgu.run({
                 const kx = B.x + Math.max(0, Math.min(1, f)) * B.w;
                 cv.roundRect(kx - 8, B.y - 8, 16, B.h + 16, 8, withAlpha('#000000', 0.55));
                 cv.roundRect(kx - 6, B.y - 6, 12, B.h + 12, 6, '#ffffff');
-                G.button(cv, t, B.x - 56, B.y - 9, 48, 40, '-', minus, { key: key + '-' });
-                G.button(cv, t, B.x + B.w + 8, B.y - 9, 48, 40, '+', plus, { key: key + '+' });
+                G.button(cv, t, B.x - 56, B.y - 10, 48, 40, '-', minus, { key: key + '-' });
+                G.button(cv, t, B.x + B.w + 8, B.y - 10, 48, 40, '+', plus, { key: key + '+' });
             };
             bar(BARS.hue, 'Colour', Math.round(q.h) + '\u00b0', HUE_RAMP, q.h / 360, () => stepHue(-15), () => stepHue(15), 'h');
             bar(BARS.sat, 'Saturation', Math.round(q.s * 100) + '%', ['#ffffff', full], q.s, () => stepSat(-1), () => stepSat(1), 's');
             bar(BARS.bright, 'Brightness', c.bright + '%', ['#20242c', now], (c.bright - 5) / 95, () => setBright(c.bright - 10), () => setBright(c.bright + 10), 'b');
 
-            // the car's menu colours and white: starting points, the wheel and the bars take it from there
-            cv.text('The car\'s colours', SWATCH.x, SWATCH.y - 12, 18, t.dim);
+            // right: the car's menu colours and white by name (starting points: the wheel and the bars take it from
+            // there), and the look given back or saved. Comfort's warning stands here while it writes the lights
+            G.panel(cv, t, 1256, 44, 320, 468, 'The car\'s colours');
+            if (others.comfort) return warnOthers(cv, t, 1272, 112, 288);
             Wh.CAR.forEach(([name, rgb], i) => {
                 const b = swatchBox(i), on = isOn() && rgb.every((v, j) => Math.abs(v - c.rgb[j]) <= 2);
-                cv.roundRect(b.x, b.y, b.w, b.h, 9, rgb);
-                cv.strokeRoundRect(b.x, b.y, b.w, b.h, 9, on ? 3 : 1.5, on ? '#ffffff' : withAlpha('#ffffff', 0.3));
+                cv.roundRect(b.x, b.y, b.w, b.h, 10, rgb);
+                cv.strokeRoundRect(b.x, b.y, b.w, b.h, 10, on ? 3 : 1.5, on ? '#ffffff' : withAlpha('#ffffff', 0.3));
+                cv.text(name, b.x + b.w / 2, b.y + b.h / 2 + 6, 17, textOn(rgb), { align: 'center', font: 'bold' });
                 if (cv.own) cv.target(b.x, b.y, b.w, b.h, () => setRgb(rgb), 'car-' + name);
             });
-
-            [['all', 'Whole car'], ['upper', 'Upper lights'], ['lower', 'Lower lights']].forEach(([key, n], i) => {
-                G.button(cv, t, 44 + i * 236, 456, 220, 46, n, () => { part = key; return redraw(); }, { primary: part === key, key: 'part-' + key });
-            });
-
-            G.panel(cv, t, 776, 44, 800, 468, editing ? MODE_NAMES[editing] + ' will look' : 'In the car');
-            if (lights.state === 'none' && !editing) return drawBmwColours(cv, t);
-            drawCabin(cv, t, { x: 790, y: 92, w: 330, h: 404 }, shown(), pictureOf(carNow, l), { rhd: rhd() });
-            const x = 1150;
-            [['Upper', l.upper], ['Lower', l.lower]].forEach(([n, v], i) => {
-                cv.roundRect(x, 104 + i * 40, 26, 26, 7, v.rgb);
-                cv.text(n + ': ' + nearest(v.rgb) + ', ' + v.bright + '%', x + 38, 124 + i * 40, 20, t.text);
-            });
-            if (editing) return editBar(cv, t, x);
-            G.button(cv, t, x, 210, 268, 48, 'Original colour', () => { control.carColour(); return redraw(); }, { primary: !control.on(), key: 'car' });
-            G.button(cv, t, x, 270, 268, 48, 'Save favourite', () => { control.saveFav(); return redraw(); }, { key: 'save' });
-            status(cv, t, x, 352);
+            if (editing) return editBar(cv, t, 1272, 372);
+            G.button(cv, t, 1272, 356, 288, 46, 'Original colour', () => { control.carColour(); return redraw(); }, { primary: !control.on(), key: 'car' });
+            return G.button(cv, t, 1272, 410, 288, 46, 'Save favourite', () => { control.saveFav(); return redraw(); }, { key: 'save' });
         }
 
         // changing a driving mode's look: which mode, and Done back to the Driving modes tab
-        function editBar(cv, t, x) {
-            cv.text('Changing ' + MODE_NAMES[editing] + '\'s look', x, 222, 22, t.text, { font: 'bold' });
-            cv.text('It shows whenever ' + MODE_NAMES[editing] + ' is on.', x, 250, 18, t.dim);
-            G.button(cv, t, x, 280, 268, 48, 'Done', done, { primary: true, key: 'done' });
+        function editBar(cv, t, x, y) {
+            const y0 = y == null ? 222 : y;
+            cv.text('Changing ' + MODE_NAMES[editing] + '\'s look', x, y0, 22, t.text, { font: 'bold' });
+            cv.text('It shows whenever ' + MODE_NAMES[editing] + ' is on.', x, y0 + 28, 18, t.dim);
+            G.button(cv, t, x, y0 + 58, 268, 48, 'Done', done, { primary: true, key: 'done' });
         }
 
         // the body controller did not answer: BMW's own colours, as BMW's menu has them
-        function drawBmwColours(cv, t) {
-            cv.text('Any colour needs the body module, which did not answer.', 796, 136, 20, t.warn);
-            cv.text('BMW\'s own colours meanwhile:', 796, 164, 20, t.dim);
+        function drawBmwColours(cv, t, x) {
+            cv.text('Any colour needs the body module, which did not answer.', x, 136, 20, t.warn);
+            cv.text('BMW\'s own colours meanwhile:', x, 164, 20, t.dim);
             const now = ambient.slot();
             for (let i = 0; i < SLOTS; i++) {
                 const n = i + 1;
-                G.button(cv, t, 796 + (i % 4) * 132, 186 + Math.floor(i / 4) * 62, 120, 50, String(n), () => { ambient.setSlot(n); return redraw(); },
+                G.button(cv, t, x + (i % 4) * 132, 186 + Math.floor(i / 4) * 60, 120, 48, String(n), () => { ambient.setSlot(n); return redraw(); },
                     { primary: n === now, busy: !ambient.available, key: 'slot-' + n });
             }
-            G.button(cv, t, 796, 386, 0, 48, 'Look again', () => { lights.find(); return redraw(); }, { key: 'again' });
-            if (others.comfort) warnOthers(cv, t, 1346, 136, 214);
+            G.button(cv, t, x, 366, 0, 46, 'Look again', () => { lights.find(); return redraw(); }, { key: 'again' });
         }
 
         function drawAnimations(cv, t) {
@@ -633,7 +673,8 @@ mgu.run({
 
         // the wheel and the bars under a finger (Colour tab): 'wheel', 'hue', 'sat' or 'bright', else null
         const whatAt = (x, y) => (Wh.wheelAt(WHEEL, x, y) ? 'wheel' : ['hue', 'sat', 'bright'].find((n) => Wh.barAt(BARS[n], x, y) != null) || null);
-        const swatchAt = (x, y) => Wh.CAR.findIndex((_, i) => { const b = swatchBox(i); return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h; });
+        const swatchAt = (x, y) => (others.comfort ? -1 : Wh.CAR.findIndex((_, i) => inBox(swatchBox(i), x, y)));
+        const partAt = (x, y) => PARTS.findIndex((_, i) => inBox(partBox(i), x, y));
         // what a finger at x, y on the wheel or a bar sets (a finger dragged off it: its nearest place)
         const applyAt = (what, x, y) => {
             const q = hsOf(partColour(look()));
@@ -673,8 +714,10 @@ mgu.run({
         } else if (ctx.onTap) {
             ctx.onTap((x, y) => {
                 if (page !== 0) return null;
-                const what = whatAt(x, y), sw = what ? -1 : swatchAt(x, y);
+                const what = whatAt(x, y);
                 if (what) return applyAt(what, x, y);
+                const pt = partAt(x, y), sw = swatchAt(x, y);
+                if (pt >= 0) { part = PARTS[pt][0]; return redraw(); }
                 return sw >= 0 ? setRgb(Wh.CAR[sw][1]) : null;
             });
         }
